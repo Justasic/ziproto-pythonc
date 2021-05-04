@@ -27,10 +27,8 @@ ZiHandle_t [[nodiscard]] *EncodeTypeSingle(ZiHandle_t *handle, ValueType_t vType
 	size_t szExtraData = 0;
 	// The ZiProto data type to be encoded as
 	ZiProtoFormat_t ZiType = 0;
-	// Cast to a 8 bit int to chop off the array sizes and stuff.
-	uint8_t Type = (uint8_t)vType;
 
-	switch (Type)
+	switch (vType)
 	{ 
 		case NIL_TYPE:
 			ZiType = NIL;
@@ -176,21 +174,41 @@ ZiHandle_t [[nodiscard]] *EncodeTypeSingle(ZiHandle_t *handle, ValueType_t vType
 		// defined by the caller by ORing them together.
 		case ARRAY_TYPE:
 		{
-			// Get the size they specify.
-			ZiType = (vType >> 8);
-			szExtraData = szTypeBuffer;
-			ExtraData	= _localbuf;
-			memcpy(ExtraData, &szTypeBuffer, szTypeBuffer);
+			uint64_t length = *(uint64_t *)TypeBuffer;
+			if (length <= 0xF)
+				ZiType = FIXARRAY + (uint8_t)length;
+			else if (length <= 0xFFFF)
+				ZiType = ARRAY16, szExtraData = sizeof(uint16_t);
+			else if (length <= 0xFFFFFFFF)
+				ZiType = ARRAY32, szExtraData = sizeof(uint32_t);
+			else
+				return NULL;
+
+			if (ZiType != FIXARRAY)
+			{
+				ExtraData = _localbuf;
+				memcpy(ExtraData, TypeBuffer, szTypeBuffer);
+			}
 			TypeBuffer = szTypeBuffer = 0;
 			break;
 		}
 		case MAP_TYPE:
 		{
-			// Get the size they specify.
-			ZiType		= (vType >> 8);
-			szExtraData = szTypeBuffer;
-			ExtraData	= _localbuf;
-			memcpy(ExtraData, &szTypeBuffer, szTypeBuffer);
+			uint64_t length = *(uint64_t *)TypeBuffer;
+			if (length <= 0xF)
+				ZiType = FIXMAP + (uint8_t)length;
+			else if (length <= 0xFFFF)
+				ZiType = MAP16, szExtraData = sizeof(uint16_t);
+			else if (length <= 0xFFFFFFFF)
+				ZiType = MAP32, szExtraData = sizeof(uint32_t);
+			else
+				return NULL;
+
+			if (ZiType != FIXMAP)
+			{
+				ExtraData = _localbuf;
+				memcpy(ExtraData, TypeBuffer, szTypeBuffer);
+			}
 			TypeBuffer = szTypeBuffer = 0;
 			break;
 		}
@@ -211,9 +229,12 @@ ZiHandle_t [[nodiscard]] *EncodeTypeSingle(ZiHandle_t *handle, ValueType_t vType
 	}
 
 	// We'll need to realloc if this is true, it's likely this will happen.
-	if (handle->_allocsz < szExtraData + szTypeBuffer + sizeof(uint8_t)) [[likely]]
+	if (handle->_allocsz < handle->szEncodedData + szExtraData + szTypeBuffer + sizeof(uint8_t)) [[likely]]
 	{
 		size_t		newsz	  = handle->_allocsz + sizeof(uint8_t) + szTypeBuffer + szExtraData;
+		// Add 8 byte alignment to help reduce the number of realloc calls.
+		newsz += newsz & 7;
+		printf("Calling realloc with new size  %ld (old size %ld)\n", newsz, handle->_allocsz);
 		ZiHandle_t *newhandle = realloc(handle, newsz);
 		// our allocation failed, return null I guess.
 		// Might want to handle this situation better.
@@ -221,7 +242,7 @@ ZiHandle_t [[nodiscard]] *EncodeTypeSingle(ZiHandle_t *handle, ValueType_t vType
 			return NULL;
 
 		// Null out the new space
-		memset(newhandle + newhandle->_allocsz, 0, sizeof(uint8_t) + szTypeBuffer + szExtraData);
+		memset(newhandle->EncodedData + newhandle->_allocsz, 0, sizeof(uint8_t) + szTypeBuffer + szExtraData);
 
 		// Update our handle object.
 		handle			 = newhandle;

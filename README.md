@@ -43,7 +43,7 @@ ValueType.MAP
 ---
 
 ## License
-Copyright *2018 Zi Xing Narrakas*
+Copyright *2018 Zi Xing Narrakas*  
 Copyright *2021 Justin Crawford <Justin@stacksmash.net>*
 
 Licensed under the Apache License, Version 2.0 (the "License");

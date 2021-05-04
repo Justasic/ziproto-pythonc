@@ -87,11 +87,12 @@ typedef struct
 	/*@}*/
 } ZiHandle_t;
 
-extern ZiHandle_t [[nodiscard]] *EncodeTypeSingle(ZiHandle_t *handle, ZiProtoFormat_t Type, const void *TypeBuffer, size_t szTypeBuffer);
+extern ZiHandle_t [[nodiscard]] *EncodeTypeSingle(ZiHandle_t *handle, ValueType_t vType, const void *TypeBuffer, size_t szTypeBuffer);
 
 // Macros to make things seem function-like
 #define FreeZiHandle(x) free(x)
 #define GetZiSize(x) (x->szEncodedData)
+#define GetZiData(x) (x->EncodedData)
 
 // Define the bigendian function to either be
 // memcpy or memrev depending on the arctiecture

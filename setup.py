@@ -28,6 +28,6 @@ setup(name='ziproto',
         #     'ziproto.ZiProtoDecoder'
         # ],
         ext_modules=[
-            Extension('ziproto', sources=['ziproto/encoder.c', 'ziproto/decoder.c', 'ziproto/python.c'])
+            Extension('ziproto', sources=['ziproto/encoder.c', 'ziproto/decoder.c', 'ziproto/python.c', 'ziproto/common.c'])
         ]
 )

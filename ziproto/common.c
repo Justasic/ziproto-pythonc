@@ -1,5 +1,6 @@
 #include "common.h"
-#include <float.h> // for FLT_MAX
+#include <stdbool.h>
+#include <tgmath.h> // For fabs()
 
 /**
  * @brief Encodes POD types to ZiProto bytes.
@@ -16,19 +17,24 @@
  */
 ZiHandle_t [[nodiscard]] *EncodeTypeSingle(ZiHandle_t *handle, ValueType_t vType, const void *TypeBuffer, size_t szTypeBuffer)
 {
-	// Small buffer for different things
-	uint8_t _localbuf[256];
+	// Small buffer for simple types. This will be used
+	// for avoiding a malloc call for types most small
+	// types, we will have to call malloc for the BIN/STR types
+	uint8_t _localbuf[8];
 	// Some types (specifically BIN and STR) have extra data they must write
 	// to the buffer for the lenths.
 	void * ExtraData   = 0;
 	size_t szExtraData = 0;
 	// The ZiProto data type to be encoded as
 	ZiProtoFormat_t ZiType = 0;
+	// Cast to a 8 bit int to chop off the array sizes and stuff.
+	uint8_t Type = (uint8_t)vType;
 
-	switch ((uint8_t)vType)
-	{
+	switch (Type)
+	{ 
 		case NIL_TYPE:
 			ZiType = NIL;
+			TypeBuffer = szTypeBuffer = 0;
 			break;
 		case BOOL_TYPE:
 		{
@@ -37,6 +43,8 @@ ZiHandle_t [[nodiscard]] *EncodeTypeSingle(ZiHandle_t *handle, ValueType_t vType
 				ZiType = TRUE;
 			else
 				ZiType = FALSE;
+			TypeBuffer = szTypeBuffer = 0;
+			break;
 		}
 		case UINT_TYPE:
 		{
@@ -44,6 +52,7 @@ ZiHandle_t [[nodiscard]] *EncodeTypeSingle(ZiHandle_t *handle, ValueType_t vType
 			if (value <= 0x7F)
 			{
 				ZiType = (ZiProtoFormat_t)((uint8_t)value);
+				TypeBuffer = szTypeBuffer = 0;
 				break;
 			}
 			else if (value <= 0xFF)
@@ -57,8 +66,8 @@ ZiHandle_t [[nodiscard]] *EncodeTypeSingle(ZiHandle_t *handle, ValueType_t vType
 
 			// We're encoding data in big endian
 			ExtraData = TypeBuffer;
-			TypeBuffer = 0;
-			szTypeBuffer = 0;
+			TypeBuffer = szTypeBuffer = 0;
+			break;
 		}
 		case INT_TYPE:
 		{
@@ -67,6 +76,7 @@ ZiHandle_t [[nodiscard]] *EncodeTypeSingle(ZiHandle_t *handle, ValueType_t vType
 			if (value >= -32)
 			{
 				ZiType = (ZiProtoFormat_t)((uint8_t)(0x100 + value));
+				TypeBuffer = szTypeBuffer = 0;
 				break;
 			}
 			else if (value >= -128)
@@ -78,6 +88,9 @@ ZiHandle_t [[nodiscard]] *EncodeTypeSingle(ZiHandle_t *handle, ValueType_t vType
 			else //if (value >= -9223372036854775808)
 				ZiType = INT64, szExtraData = sizeof(int64_t);
 
+			ExtraData = TypeBuffer;
+			TypeBuffer = szTypeBuffer = 0;
+			break;
 		}
 		case FLOAT_TYPE:
 		{
@@ -87,7 +100,8 @@ ZiHandle_t [[nodiscard]] *EncodeTypeSingle(ZiHandle_t *handle, ValueType_t vType
 				double value = *(double *)TypeBuffer;
 				// Maybe some day this comparison can be done with
 				// integer values or something to make it faster but oh well.
-				if (value < FLT_MAX) [[unlikely]]
+				// ref: https://stackoverflow.com/a/16857716
+				if (fabs(value) <= 340282346638528859811704183484516925440.000000)
 				{
 					// This can be a float32.
 					float val = (float)value;
@@ -98,18 +112,19 @@ ZiHandle_t [[nodiscard]] *EncodeTypeSingle(ZiHandle_t *handle, ValueType_t vType
 				}
 				else
 				{
-					ZiType = FLOAT64;
-					ExtraData = TypeBuffer;
+					ZiType		= FLOAT64;
+					ExtraData   = TypeBuffer;
 					szExtraData = szTypeBuffer;
 				}
 			}
 			else
 			{
-				ZiType = FLOAT32;
-				ExtraData = TypeBuffer;
+				ZiType		= FLOAT64;
+				ExtraData   = TypeBuffer;
 				szExtraData = szTypeBuffer;
 			}
 			TypeBuffer = szTypeBuffer = 0;
+			break;
 		}
 		case BIN_TYPE:
 		{
@@ -130,7 +145,9 @@ ZiHandle_t [[nodiscard]] *EncodeTypeSingle(ZiHandle_t *handle, ValueType_t vType
 				ZiType = BIN32, szExtraData = sizeof(uint32_t);
 			else
 				return NULL;
+			ExtraData = _localbuf;
 			memcpy(ExtraData, &szTypeBuffer, szExtraData);
+			break;
 		}
 		case STR_TYPE:
 		{
@@ -151,7 +168,9 @@ ZiHandle_t [[nodiscard]] *EncodeTypeSingle(ZiHandle_t *handle, ValueType_t vType
 				ZiType = STR32, szExtraData = sizeof(uint32_t);
 			else
 				return NULL;
+			ExtraData = _localbuf;
 			memcpy(ExtraData, &szTypeBuffer, szExtraData);
+			break;
 		}
 		// In both the array and map types, we pack the type needed
 		// defined by the caller by ORing them together.
@@ -160,16 +179,20 @@ ZiHandle_t [[nodiscard]] *EncodeTypeSingle(ZiHandle_t *handle, ValueType_t vType
 			// Get the size they specify.
 			ZiType = (vType >> 8);
 			szExtraData = szTypeBuffer;
+			ExtraData	= _localbuf;
 			memcpy(ExtraData, &szTypeBuffer, szTypeBuffer);
 			TypeBuffer = szTypeBuffer = 0;
+			break;
 		}
 		case MAP_TYPE:
 		{
 			// Get the size they specify.
 			ZiType		= (vType >> 8);
 			szExtraData = szTypeBuffer;
+			ExtraData	= _localbuf;
 			memcpy(ExtraData, &szTypeBuffer, szTypeBuffer);
 			TypeBuffer = szTypeBuffer = 0;
+			break;
 		}
 		default:
 			return NULL;
@@ -206,8 +229,9 @@ ZiHandle_t [[nodiscard]] *EncodeTypeSingle(ZiHandle_t *handle, ValueType_t vType
 	}
 
 	// Write our type byte (will always be first)
-	memcpy(handle->EncodedData + handle->_cursor, &Type, sizeof(uint8_t));
+	memcpy(handle->EncodedData + handle->_cursor, &ZiType, sizeof(uint8_t));
 	handle->_cursor += sizeof(uint8_t);
+	handle->szEncodedData += sizeof(uint8_t);
 
 	// Write our extra data if needed
 	if (ExtraData)
@@ -225,6 +249,7 @@ ZiHandle_t [[nodiscard]] *EncodeTypeSingle(ZiHandle_t *handle, ValueType_t vType
 		handle->_cursor += szTypeBuffer;
 		handle->szEncodedData += szTypeBuffer;
 	}
+
 
 	// We're done!
 	return handle;

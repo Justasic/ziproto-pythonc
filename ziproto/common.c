@@ -1,4 +1,5 @@
 #include "common.h"
+#include <float.h> // for FLT_MAX
 
 /**
  * @brief Encodes POD types to ZiProto bytes.
@@ -15,6 +16,8 @@
  */
 ZiHandle_t [[nodiscard]] *EncodeTypeSingle(ZiHandle_t *handle, ValueType_t vType, const void *TypeBuffer, size_t szTypeBuffer)
 {
+	// Small buffer for different things
+	uint8_t _localbuf[256];
 	// Some types (specifically BIN and STR) have extra data they must write
 	// to the buffer for the lenths.
 	void * ExtraData   = 0;
@@ -22,7 +25,7 @@ ZiHandle_t [[nodiscard]] *EncodeTypeSingle(ZiHandle_t *handle, ValueType_t vType
 	// The ZiProto data type to be encoded as
 	ZiProtoFormat_t ZiType = 0;
 
-	switch (vType)
+	switch ((uint8_t)vType)
 	{
 		case NIL_TYPE:
 			ZiType = NIL;
@@ -40,7 +43,6 @@ ZiHandle_t [[nodiscard]] *EncodeTypeSingle(ZiHandle_t *handle, ValueType_t vType
 			uint64_t value = *(uint64_t *)TypeBuffer;
 			if (value <= 0x7F)
 			{
-				// This is weird, the type is the int
 				ZiType = (ZiProtoFormat_t)((uint8_t)value);
 				break;
 			}
@@ -79,162 +81,95 @@ ZiHandle_t [[nodiscard]] *EncodeTypeSingle(ZiHandle_t *handle, ValueType_t vType
 		}
 		case FLOAT_TYPE:
 		{
-			double value = *(double*)
+			// Fun: https://evanw.github.io/float-toy/
 			if (szTypeBuffer > sizeof(float))
 			{
-
+				double value = *(double *)TypeBuffer;
+				// Maybe some day this comparison can be done with
+				// integer values or something to make it faster but oh well.
+				if (value < FLT_MAX) [[unlikely]]
+				{
+					// This can be a float32.
+					float val = (float)value;
+					ZiType = FLOAT32;
+					memcpy(_localbuf, &val, sizeof(float));
+					ExtraData = _localbuf;
+					szExtraData = sizeof(float);
+				}
+				else
+				{
+					ZiType = FLOAT64;
+					ExtraData = TypeBuffer;
+					szExtraData = szTypeBuffer;
+				}
 			}
-
-			#if 0
-			// Rationale:
-			// Some systems may not have Floating point support but wish
-			// to use ZiProto and if we can still avoid using 4 more bytes
-			// then lets do it. This attempts to "safely" convert a double
-			// precision number to a single precision number if the number
-			// will fit in single precision. Since software-emulated FPUs
-			// can be quite costly to do conversions, we do these as
-			// integer operations in C code (which all computers are fast
-			// at), it's ugly but it's fast and that's all I care about.
-			// Fun: https://evanw.github.io/float-toy/
-			uint64_t value = *(uint64_t *)TypeBuffer;
-
-			// 0x7F7FFFFF
-
-			// ignore the sign bit in our comparisons
-			value &= 0x80000000;
-
-			uint32_t exponent = value >> 23;
-			uint32_t fraction = value & 0x7FFFFF;
-
-			if ()
-			#endif
-
-			// Encode a 32 bit or 64 bit floating point value.
+			else
+			{
+				ZiType = FLOAT32;
+				ExtraData = TypeBuffer;
+				szExtraData = szTypeBuffer;
+			}
+			TypeBuffer = szTypeBuffer = 0;
 		}
 		case BIN_TYPE:
 		{
+			if (!TypeBuffer || !szTypeBuffer)
+			{
+				ZiType = BIN8;
+				break;
+			}
 
+			// Handle size first
+			if (szTypeBuffer <= 0x7F)
+				ZiType = BIN8, szExtraData = sizeof(uint8_t);
+			else if (szTypeBuffer <= 0xFF)
+				ZiType = BIN8, szExtraData = sizeof(uint8_t);
+			else if (szTypeBuffer <= 0xFFFF)
+				ZiType = BIN16, szExtraData = sizeof(uint16_t);
+			else if (szTypeBuffer <= 0xFFFFFFFF)
+				ZiType = BIN32, szExtraData = sizeof(uint32_t);
+			else
+				return NULL;
+			memcpy(ExtraData, &szTypeBuffer, szExtraData);
 		}
 		case STR_TYPE:
 		{
+			if (!TypeBuffer || !szTypeBuffer)
+			{
+				ZiType = FIXSTR;
+				break;
+			}
 
+			// Handle size first
+			if (szTypeBuffer < 32)
+				ZiType = FIXSTR + szTypeBuffer;
+			else if (szTypeBuffer <= 0xFF)
+				ZiType = STR8, szExtraData = sizeof(uint8_t);
+			else if (szTypeBuffer <= 0xFFFF)
+				ZiType = STR16, szExtraData = sizeof(uint16_t);
+			else if (szTypeBuffer <= 0xFFFFFFFF)
+				ZiType = STR32, szExtraData = sizeof(uint32_t);
+			else
+				return NULL;
+			memcpy(ExtraData, &szTypeBuffer, szExtraData);
 		}
-		// In both the array and map types, we simply
-		// make a decision based on the szTypeBuffer size
-		// Subsequent calls to this function should yield
-		// the correct formatting. This just encodes the
-		// type byte.
+		// In both the array and map types, we pack the type needed
+		// defined by the caller by ORing them together.
 		case ARRAY_TYPE:
 		{
-			if (szTypeBuffer == FIXARRAY)
-				ZiType = FIXARRAY;
-			if (szTypeBuffer == ARRAY16)
-				ZiType = ARRAY16;
-			if (szTypeBuffer == ARRAY32)
-				ZiType = ARRAY32;
-			TypeBuffer = 0;
-			szTypeBuffer = 0;
+			// Get the size they specify.
+			ZiType = (vType >> 8);
+			szExtraData = szTypeBuffer;
+			memcpy(ExtraData, &szTypeBuffer, szTypeBuffer);
+			TypeBuffer = szTypeBuffer = 0;
 		}
 		case MAP_TYPE:
 		{
-			if (szTypeBuffer == FIXMAP)
-				ZiType = FIXMAP;
-			if (szTypeBuffer == MAP16)
-				ZiType = MAP16;
-			if (szTypeBuffer == MAP32)
-				ZiType = MAP32;
-			TypeBuffer = 0;
-			szTypeBuffer = 0;
-		}
-		default:
-			break;
-	}
-
-	// Write the actual byte data
-	switch (Type)
-	{
-		case POSITIVE_FIXINT:
-		{
-			break;
-		}
-		case FIXMAP:
-		{
-			break;
-		}
-		case FIXARRAY:
-		{
-			break;
-		}
-		case FIXSTR:
-		{
-			break;
-		}
-		case NIL:  [[fallthrough]]
-		case 0xC2: [[fallthrough]] // ZiProto FALSE
-		case 0xC3: [[fallthrough]] // ZiProto TRUE
-			break;
-		case BIN8:
-		{
-			break;
-		}
-		case BIN16:
-		{
-			break;
-		}
-		case BIN32:
-		{
-			break;
-		}
-		case FLOAT32: [[fallthrough]]
-		case FLOAT64:
-			break;
-		case UINT8:  [[fallthrough]]
-		case UINT16: [[fallthrough]]
-		case UINT32: [[fallthrough]]
-		case UINT64: [[fallthrough]]
-		case INT8:   [[fallthrough]]
-		case INT16:  [[fallthrough]]
-		case INT32:  [[fallthrough]]
-		case INT64:
-		{
-			// We want reverse endianness.
-			ExtraData = TypeBuffer;
+			// Get the size they specify.
+			ZiType		= (vType >> 8);
 			szExtraData = szTypeBuffer;
-			TypeBuffer = 0;
-			szTypeBuffer = 0;
-			break;
-		}
-		case STR8:
-		{
-			break;
-		}
-		case STR16:
-		{
-			break;
-		}
-		case STR32:
-		{
-			break;
-		}
-		case ARRAY16:
-		{
-			break;
-		}
-		case ARRAY32:
-		{
-			break;
-		}
-		case MAP16:
-		{
-			break;
-		}
-		case MAP32:
-		{
-			break;
-		}
-		case NEGATIVE_FIXINT:
-		{
-			break;
+			memcpy(ExtraData, &szTypeBuffer, szTypeBuffer);
+			TypeBuffer = szTypeBuffer = 0;
 		}
 		default:
 			return NULL;
@@ -284,7 +219,7 @@ ZiHandle_t [[nodiscard]] *EncodeTypeSingle(ZiHandle_t *handle, ValueType_t vType
 	}
 
 	// Now write our data itself (if applicable)
-	if (szTypeBuffer)
+	if (szTypeBuffer && TypeBuffer)
 	{
 		memcpy(handle->EncodedData + handle->_cursor, TypeBuffer, szTypeBuffer);
 		handle->_cursor += szTypeBuffer;
@@ -293,14 +228,4 @@ ZiHandle_t [[nodiscard]] *EncodeTypeSingle(ZiHandle_t *handle, ValueType_t vType
 
 	// We're done!
 	return handle;
-}
-
-ZiHandle_t [[nodiscard]] *EncodeArray(ZiHandle_t *handle, ZiProtoFormat_t Type, const void *Array, size_t szArray)
-{
-	// TODO: Handle array types
-}
-
-ZiHandle_t [[nodiscard]] *EncodeMap(ZiHandle_t *handle, ZiProtoFormat_t Type)
-{
-	// TODO: Handle array types
 }

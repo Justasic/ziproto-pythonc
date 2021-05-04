@@ -284,11 +284,11 @@ PyObject *ziproto_encode(PyObject *self, PyObject *obj)
 
 		PyObject *key_bytes, *value_bytes;
 		Py_ssize_t pos = 0;
-		while (PyDict_Next(obj, &pos, &key, &value))
+		while (PyDict_Next(obj, &pos, &key_bytes, &value_bytes))
 		{
-			PyObject *key_bytes = ziproto_encode(self, key);
+			PyObject *key_bytes = ziproto_encode(self, value_bytes);
 			Py_INCREF(key_bytes);
-			PyObject *value_bytes = ziproto_encode(self, value);
+			PyObject *value_bytes = ziproto_encode(self, value_bytes);
 			Py_INCREF(value_bytes);
 
 			if (!PyBytes_Check(key_bytes))

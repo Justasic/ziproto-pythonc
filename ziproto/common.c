@@ -15,7 +15,7 @@
  * @param[in] szTypeBuffer Size of the data in TypeBuffer.
  * @returns ZiHandle_t object with the updated state (may be reallocated) or null on failure.
  */
-ZiHandle_t [[nodiscard]] *EncodeTypeSingle(ZiHandle_t *handle, ValueType_t vType, const void *TypeBuffer, size_t szTypeBuffer)
+ZiHandle_t NODISCARD *EncodeTypeSingle(ZiHandle_t *handle, ValueType_t vType, const void *TypeBuffer, size_t szTypeBuffer)
 {
 	// Small buffer for simple types. This will be used
 	// for avoiding a malloc call for types most small
@@ -221,28 +221,28 @@ ZiHandle_t [[nodiscard]] *EncodeTypeSingle(ZiHandle_t *handle, ValueType_t vType
 	// In this instance we allocate the size of the ZiHandle_t struct
 	// plus the size of the byte we're about to encode as well as the
 	// size of the ZiProtoFormat_t type byte.
-	if (!handle) [[unlikely]]
+	size_t szNextSize = sizeof(ZiHandle_t) + szExtraData + szTypeBuffer + sizeof(uint8_t);
+	if (unlikely(!handle))
 	{
-		handle = malloc(sizeof(ZiHandle_t) + szExtraData + szTypeBuffer + sizeof(uint8_t));
-		memset(handle, 0, sizeof(ZiHandle_t) + szExtraData + szTypeBuffer + sizeof(uint8_t));
-		handle->_allocsz = szExtraData + szTypeBuffer + sizeof(uint8_t);
+		handle = malloc(szNextSize);
+		memset(handle, 0, szNextSize);
+		handle->_allocsz = szNextSize;
 	}
 
 	// We'll need to realloc if this is true, it's likely this will happen.
-	if (handle->_allocsz < handle->szEncodedData + szExtraData + szTypeBuffer + sizeof(uint8_t)) [[likely]]
+	if (likely(handle->_allocsz < (handle->szEncodedData + szNextSize)))
 	{
-		size_t		newsz	  = handle->_allocsz + sizeof(uint8_t) + szTypeBuffer + szExtraData;
+		size_t addl_bytes = sizeof(uint8_t) + szTypeBuffer + szExtraData;
+		size_t newsz	  = handle->_allocsz + addl_bytes;
 		// Add 8 byte alignment to help reduce the number of realloc calls.
-		newsz += newsz & 7;
-		printf("Calling realloc with new size  %ld (old size %ld)\n", newsz, handle->_allocsz);
-		ZiHandle_t *newhandle = realloc(handle, newsz);
+		ZiHandle_t *newhandle = realloc(handle, newsz + (newsz & 7));
 		// our allocation failed, return null I guess.
 		// Might want to handle this situation better.
-		if (!newhandle) [[unlikely]]
+		if (unlikely(!newhandle))
 			return NULL;
 
 		// Null out the new space
-		memset(newhandle->EncodedData + newhandle->_allocsz, 0, sizeof(uint8_t) + szTypeBuffer + szExtraData);
+		memset(((uint8_t*)newhandle) + newhandle->_allocsz, 0, newsz - newhandle->_allocsz);
 
 		// Update our handle object.
 		handle			 = newhandle;

@@ -5,6 +5,7 @@ from shutil import rmtree
 from setuptools import setup, Extension
 
 here = os.path.abspath(os.path.dirname(__file__))
+os.environ["CC"] = "clang"
 
 with io.open(os.path.join(here, 'README.md'), encoding='utf-8') as f:
     long_description = '\n' + f.read()
@@ -28,6 +29,10 @@ setup(name='ziproto',
         #     'ziproto.ZiProtoDecoder'
         # ],
         ext_modules=[
-            Extension('ziproto', sources=['ziproto/encoder.c', 'ziproto/decoder.c', 'ziproto/python.c', 'ziproto/common.c'])
+            Extension('ziproto',
+                sources=['ziproto/encoder.c', 'ziproto/decoder.c', 'ziproto/python.c', 'ziproto/common.c'],
+                extra_compile_args=['-std=c11'],
+                #extra_link_args=['-fsanitize=address']
+            )
         ]
 )

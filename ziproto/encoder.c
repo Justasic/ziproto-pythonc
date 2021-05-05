@@ -23,30 +23,7 @@ void PrintObject(PyObject *obj)
 	Py_DECREF(namestr_obj);
 }
 
-PyObject *EncodeAndDestroy(ZiHandle_t *handle)
-{
-	//EncodeTypeSingle;
-	if (!handle) [[unlikely]]
-		return PyErr_Format(PyExc_RuntimeError, "Encoding failure from C");
-
-	PyObject *memobj = PyMemoryView_FromMemory(handle->EncodedData, handle->szEncodedData, PyBUF_READ);
-	PyObject *ret = PyBytes_FromObject(memobj);
-
-	FreeZiHandle(handle);
-	return ret;
-}
-
-PyObject *EncodeFailure(PyObject *obj)
-{
-	PyObject *namestr_obj = PyObject_ASCII(obj);
-	Py_INCREF(namestr_obj);
-	// Now try and get the string'd version of that object
-	PyObject *retval = PyErr_Format(PyExc_OverflowError, "Encode failed. %s", PyUnicode_AsUTF8(namestr_obj));
-	Py_DECREF(namestr_obj);
-	return retval;
-}
-
-ZiHandle_t *EncodePySingle(ZiHandle_t *handle, PyObject *obj)
+ZiHandle_t *EncodePyType(ZiHandle_t *handle, PyObject *obj)
 {
 	// Encode "None" from Python
 	// https://stackoverflow.com/a/29732914
@@ -62,7 +39,7 @@ ZiHandle_t *EncodePySingle(ZiHandle_t *handle, PyObject *obj)
 	}
 	else if (PyLong_Check(obj))
 	{
-		int		  overflow = 0;
+		int       overflow = 0;
 		long long svalue   = PyLong_AsLongLongAndOverflow(obj, &overflow);
 
 		// signed long long will overflow but we have to support numbers
@@ -97,7 +74,7 @@ ZiHandle_t *EncodePySingle(ZiHandle_t *handle, PyObject *obj)
 	{
 		Py_INCREF(obj);
 		const char *buffer = 0;
-		Py_ssize_t	length = 0;
+		Py_ssize_t  length = 0;
 		if (PyBytes_Check(obj))
 		{
 			buffer = PyBytes_AsString(obj);
@@ -120,106 +97,111 @@ ZiHandle_t *EncodePySingle(ZiHandle_t *handle, PyObject *obj)
 	}
 	else if (PyUnicode_Check(obj))
 	{
-		Py_ssize_t	length = 0;
+		Py_ssize_t  length = 0;
 		const char *text   = PyUnicode_AsUTF8AndSize(obj, &length);
 		if (text)
 			return EncodeTypeSingle(handle, STR_TYPE, text, length);
 		else
 			return NULL;
 	}
-	return NULL;
-}
-
-
-
-PyObject *ziproto_encode(PyObject *self, PyObject *obj)
-{
-	// TODO: idk can this be better?
-	if (obj == Py_None || PyBool_Check(obj) || PyLong_Check(obj) || PyFloat_Check(obj) ||
-			PyBytes_Check(obj) || PyByteArray_Check(obj) || PyUnicode_Check(obj))
+	else if (PyDict_Check(obj))
 	{
-		return EncodeAndDestroy(EncodePySingle(NULL, obj));
+		Py_ssize_t length = PyDict_Size(obj);
+		if (length == -1)
+			return NULL;
+
+		ZiHandle_t *data = EncodeTypeSingle(handle, MAP_TYPE, &length, sizeof(length));
+		if (!data)
+			return NULL;
+
+		PyObject *key_obj, *value_obj;
+		Py_ssize_t pos = 0;
+		while (PyDict_Next(obj, &pos, &key_obj, &value_obj))
+		{
+			printf("Dict Key: ");
+			PrintObject(key_obj);
+			printf("Dict value: ");
+			PrintObject(value_obj);
+			
+			ZiHandle_t *newhand = EncodePyType(handle, key_obj);
+			if (!newhand)
+			{
+				Py_DECREF(key_obj);
+				return NULL;
+			}
+			
+			newhand = EncodePyType(newhand, value_obj);
+			if (!newhand)
+			{
+				Py_DECREF(value_obj);
+				return NULL;
+			}
+			Py_DECREF(key_obj);
+			Py_DECREF(value_obj);
+			handle = newhand;
+		}
+		return data;
 	}
 	else if (PyObject_HasAttrString(obj, "__iter__"))
 	{
 		// It's an array-like object (or so we hope)
 		Py_ssize_t length = PyObject_Length(obj);
 		if (length == -1)
-			return EncodeFailure(obj);
-
-		printf("Length of %ld\n", length);
+			return NULL;
 
 		// We start an array
-		ZiHandle_t *data = EncodeTypeSingle(NULL, ARRAY_TYPE, &length, sizeof(length));
+		ZiHandle_t *data = EncodeTypeSingle(handle, ARRAY_TYPE, &length, sizeof(length));
+		// Array too big!
+		if (!data)
+			return NULL;
 
 		PyObject *iter = PyObject_GetIter(obj);
 		if (!iter || PyCallIter_Check(iter))
-			return PyErr_Format(PyExc_RuntimeError, "Was given an object without an __iter__ method (this shoudn't happen????)");
+			return NULL;
+			//return PyErr_Format(PyExc_RuntimeError, "Was given an object without an __iter__ method (this shoudn't happen????)");
 
 		PyObject *item = NULL;
-
 		while ((item = PyIter_Next(iter)))
 		{
-			PrintObject(item);
-			ZiHandle_t *nextdata = EncodePySingle(data, item);
-			if (!nextdata)
+			// Call recursively
+			ZiHandle_t *nextdata = EncodePyType(data, item);
+			if (!nextdata || PyErr_Occurred())
 			{
-				printf("Failed to encode: ");
-				PrintObject(item);
+				FreeZiHandle(data);
+				Py_DECREF(item);
+				Py_DECREF(iter);
+				return NULL;
 			}
 			else
 				data = nextdata;
 			Py_DECREF(item);
 		}
 		Py_DECREF(iter);
-
-		if (PyErr_Occurred())
-		{
-			printf("An error happened!\n");
-		}
-		printf("Returning data!\n");
-
-		return EncodeAndDestroy(data);
+		
+		return data;
 	}
-	else if (PyDict_Check(obj))
+	return NULL;
+}
+
+PyObject *ziproto_encode(PyObject *self, PyObject *obj)
+{
+	ZiHandle_t *data = EncodePyType(NULL, obj);
+	if (!data)
 	{
-		// Dictionaries are a bit weird, we'll iterate the dictionary
-		// then encode the data type as a byte object.
-
-		// TODO: this is really a cheap hack, we should do our own
-		// implementation to use internal buffers instead of recursive
-		// calls to this function.
-		Py_ssize_t length = PyDict_Size(obj);
-
-		ZiProtoFormat_t type;
-		if (length <= 0xF)
-			type = FIXMAP;
-		else if (length <= 0xFFFF)
-			type = ARRAY16;
-		else if (length <= 0xFFFFFFFF)
-			type = ARRAY32;
-		else
-			return EncodeFailure(obj);
-
-		PyObject *key_bytes, *value_bytes;
-		Py_ssize_t pos = 0;
-		while (PyDict_Next(obj, &pos, &key_bytes, &value_bytes))
-		{
-			PyObject *key_bytes = ziproto_encode(self, value_bytes);
-			Py_INCREF(key_bytes);
-			PyObject *value_bytes = ziproto_encode(self, value_bytes);
-			Py_INCREF(value_bytes);
-
-			if (!PyBytes_Check(key_bytes))
-				return key_bytes;
-			if (!PyBytes_Check(value_bytes))
-				return value_bytes;
-		}
+		PyObject *namestr_obj = PyObject_ASCII(obj);
+		Py_INCREF(namestr_obj);
+		// Now try and get the string'd version of that object
+		PyObject *retval = PyErr_Format(PyExc_OverflowError, "Encode failed. %s", PyUnicode_AsUTF8(namestr_obj));
+		Py_DECREF(namestr_obj);
+		return retval;
 	}
-	// else
-	// 	return EncodeFailure(obj);
+	
+	if (unlikely(!data))
+		return PyErr_Format(PyExc_RuntimeError, "Encoding failure from C");
 
-	// If ZiProto is upgraded in the future to support additional types
-	// return not implemented which I guess is safe enough.
-	Py_RETURN_NOTIMPLEMENTED;
+	PyObject *memobj = PyMemoryView_FromMemory(GetZiData(data), GetZiSize(data), PyBUF_READ);
+	PyObject *ret = PyBytes_FromObject(memobj);
+	FreeZiHandle(data);
+	
+	return ret;
 }

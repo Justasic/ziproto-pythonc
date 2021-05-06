@@ -9,6 +9,7 @@
 // 5. https://stackoverflow.com/a/29732914
 // 6. https://docs.python.org/3/extending/extending.html
 
+#if 0
 void PrintObject(PyObject *obj)
 {
 	if (!obj)
@@ -21,6 +22,18 @@ void PrintObject(PyObject *obj)
 	Py_INCREF(namestr_obj);
 	printf("Object: %s\n", PyUnicode_AsUTF8(namestr_obj));
 	Py_DECREF(namestr_obj);
+}
+#endif
+
+// A function that releases the python GIL to allow
+// multiple threads to handle decoding.
+ZiHandle_t *EncodeTypeSingleMT(ZiHandle_t *handle, ValueType_t vType, const void *TypeBuffer, size_t szTypeBuffer)
+{
+	ZiHandle_t *ret = NULL;
+	Py_BEGIN_ALLOW_THREADS
+	ret = EncodeTypeSingle(handle, vType, TypeBuffer, szTypeBuffer);
+	Py_END_ALLOW_THREADS
+	return ret;
 }
 
 ZiHandle_t *EncodePyType(ZiHandle_t *handle, PyObject *obj)
@@ -93,6 +106,12 @@ ZiHandle_t *EncodePyType(ZiHandle_t *handle, PyObject *obj)
 		}
 		ZiHandle_t *ret = EncodeTypeSingle(handle, BIN_TYPE, buffer, length);
 		Py_DECREF(obj);
+		if (!ret)
+		{
+			if (handle)
+				FreeZiHandle(handle);
+			return NULL;
+		}
 		return ret;
 	}
 	else if (PyUnicode_Check(obj))
@@ -112,33 +131,32 @@ ZiHandle_t *EncodePyType(ZiHandle_t *handle, PyObject *obj)
 
 		ZiHandle_t *data = EncodeTypeSingle(handle, MAP_TYPE, &length, sizeof(length));
 		if (!data)
+		{
+			if (handle)
+				FreeZiHandle(handle);
 			return NULL;
+		}
 
 		PyObject *key_obj, *value_obj;
 		Py_ssize_t pos = 0;
 		while (PyDict_Next(obj, &pos, &key_obj, &value_obj))
 		{
-			printf("Dict Key: ");
-			PrintObject(key_obj);
-			printf("Dict value: ");
-			PrintObject(value_obj);
-			
-			ZiHandle_t *newhand = EncodePyType(handle, key_obj);
+			ZiHandle_t *newhand = EncodePyType(data, key_obj);
 			if (!newhand)
 			{
-				Py_DECREF(key_obj);
+				if (handle)
+					FreeZiHandle(handle);
 				return NULL;
 			}
 			
-			newhand = EncodePyType(newhand, value_obj);
-			if (!newhand)
+			ZiHandle_t *newhand2 = EncodePyType(newhand, value_obj);
+			if (!newhand2)
 			{
-				Py_DECREF(value_obj);
+				if (newhand)
+					FreeZiHandle(newhand);
 				return NULL;
 			}
-			Py_DECREF(key_obj);
-			Py_DECREF(value_obj);
-			handle = newhand;
+			data = newhand2;
 		}
 		return data;
 	}
@@ -153,7 +171,11 @@ ZiHandle_t *EncodePyType(ZiHandle_t *handle, PyObject *obj)
 		ZiHandle_t *data = EncodeTypeSingle(handle, ARRAY_TYPE, &length, sizeof(length));
 		// Array too big!
 		if (!data)
+		{
+			if (handle)
+				FreeZiHandle(handle);
 			return NULL;
+		}
 
 		PyObject *iter = PyObject_GetIter(obj);
 		if (!iter || PyCallIter_Check(iter))
@@ -167,7 +189,8 @@ ZiHandle_t *EncodePyType(ZiHandle_t *handle, PyObject *obj)
 			ZiHandle_t *nextdata = EncodePyType(data, item);
 			if (!nextdata || PyErr_Occurred())
 			{
-				FreeZiHandle(data);
+				if (data)
+					FreeZiHandle(data);
 				Py_DECREF(item);
 				Py_DECREF(iter);
 				return NULL;
@@ -186,7 +209,7 @@ ZiHandle_t *EncodePyType(ZiHandle_t *handle, PyObject *obj)
 PyObject *ziproto_encode(PyObject *self, PyObject *obj)
 {
 	ZiHandle_t *data = EncodePyType(NULL, obj);
-	if (!data)
+	if (unlikely(!data))
 	{
 		PyObject *namestr_obj = PyObject_ASCII(obj);
 		Py_INCREF(namestr_obj);
@@ -195,13 +218,13 @@ PyObject *ziproto_encode(PyObject *self, PyObject *obj)
 		Py_DECREF(namestr_obj);
 		return retval;
 	}
-	
-	if (unlikely(!data))
-		return PyErr_Format(PyExc_RuntimeError, "Encoding failure from C");
 
 	PyObject *memobj = PyMemoryView_FromMemory(GetZiData(data), GetZiSize(data), PyBUF_READ);
 	PyObject *ret = PyBytes_FromObject(memobj);
-	FreeZiHandle(data);
+	// Only free the ZiHandle_t structure, not the underlying data buffer.
+	// the Python interpreter will free our underlying buffer.
+	free(data);
+// 	FreeZiHandle(data);
 	
 	return ret;
 }

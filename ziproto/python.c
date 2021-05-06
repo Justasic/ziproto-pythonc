@@ -21,7 +21,6 @@ static struct PyModuleDef ziproto_module = {
 PyMODINIT_FUNC
 PyInit_ziproto(void)
 {
-	printf("Using C version\n");
 	// Our python object is pretty simplistic.
 	// Just one object with 2 functions, both entirely C
 	return PyModule_Create(&ziproto_module);

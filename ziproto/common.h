@@ -87,14 +87,14 @@ typedef struct
 	size_t szEncodedData;   /**< Size of the raw ZiProto data buffer */
 	size_t _allocsz;        /**< Allocated size of the EncodedData object */
 	size_t _cursor;         /**< Current position in the EncodedData buffer */
-	uint8_t EncodedData[1]; /**< Raw ZiProto encoded data */
+	uint8_t *EncodedData;   /**< Raw ZiProto encoded data */
 	/*@}*/
 } ZiHandle_t;
 
 extern ZiHandle_t NODISCARD *EncodeTypeSingle(ZiHandle_t *handle, ValueType_t vType, const void *TypeBuffer, size_t szTypeBuffer);
 
 // Macros to make things seem function-like
-#define FreeZiHandle(x) free(x)
+#define FreeZiHandle(x) {free(x->EncodedData); free(x);}
 #define GetZiSize(x) (x->szEncodedData)
 #define GetZiData(x) (x->EncodedData)
 

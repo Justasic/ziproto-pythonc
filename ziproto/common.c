@@ -221,32 +221,43 @@ ZiHandle_t NODISCARD *EncodeTypeSingle(ZiHandle_t *handle, ValueType_t vType, co
 	// In this instance we allocate the size of the ZiHandle_t struct
 	// plus the size of the byte we're about to encode as well as the
 	// size of the ZiProtoFormat_t type byte.
-	size_t szNextSize = sizeof(ZiHandle_t) + szExtraData + szTypeBuffer + sizeof(uint8_t);
+	size_t szNextSize = szExtraData + szTypeBuffer + sizeof(uint8_t);
+	bool wasallocated = false;
 	if (unlikely(!handle))
 	{
-		handle = malloc(szNextSize);
-		memset(handle, 0, szNextSize);
+		handle = malloc(sizeof(ZiHandle_t));
+		memset(handle, 0, sizeof(ZiHandle_t));
+		handle->EncodedData = malloc(szNextSize);
+		memset(handle->EncodedData, 0, szNextSize);
 		handle->_allocsz = szNextSize;
+		wasallocated = true;
 	}
-
+	
 	// We'll need to realloc if this is true, it's likely this will happen.
 	if (likely(handle->_allocsz < (handle->szEncodedData + szNextSize)))
 	{
 		size_t addl_bytes = sizeof(uint8_t) + szTypeBuffer + szExtraData;
-		size_t newsz	  = handle->_allocsz + addl_bytes;
+		size_t newsz      = handle->_allocsz + addl_bytes;
+		newsz += newsz + (newsz & 7);
 		// Add 8 byte alignment to help reduce the number of realloc calls.
-		ZiHandle_t *newhandle = realloc(handle, newsz + (newsz & 7));
+		void *newhandle = realloc(handle->EncodedData, newsz);
 		// our allocation failed, return null I guess.
 		// Might want to handle this situation better.
 		if (unlikely(!newhandle))
+		{
+			// Don't memleak on failure
+			if (wasallocated)
+				free(handle);
 			return NULL;
+		}
+			
 
 		// Null out the new space
-		memset(((uint8_t*)newhandle) + newhandle->_allocsz, 0, newsz - newhandle->_allocsz);
+		memset(((uint8_t*)newhandle) + handle->_allocsz, 0, newsz - handle->_allocsz);
 
 		// Update our handle object.
-		handle			 = newhandle;
-		handle->_allocsz = newsz;
+		handle->EncodedData = newhandle;
+		handle->_allocsz    = newsz;
 	}
 
 	// Write our type byte (will always be first)

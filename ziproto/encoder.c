@@ -88,6 +88,7 @@ ZiHandle_t *EncodePyType(ZiHandle_t *handle, PyObject *obj)
 		Py_INCREF(obj);
 		const char *buffer = 0;
 		Py_ssize_t  length = 0;
+		// TODO: Use PyObject_GetBuffer instead?
 		if (PyBytes_Check(obj))
 		{
 			buffer = PyBytes_AsString(obj);

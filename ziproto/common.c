@@ -129,6 +129,9 @@ ZiHandle_t NODISCARD *EncodeTypeSingle(ZiHandle_t *handle, ValueType_t vType, co
 			if (!TypeBuffer || !szTypeBuffer)
 			{
 				ZiType = BIN8;
+				_localbuf[0] = 0;
+				ExtraData = _localbuf;
+				szExtraData = sizeof(uint8_t);
 				break;
 			}
 

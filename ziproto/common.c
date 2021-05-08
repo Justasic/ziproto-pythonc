@@ -110,14 +110,14 @@ ZiHandle_t NODISCARD *EncodeTypeSingle(ZiHandle_t *handle, ValueType_t vType, co
 				}
 				else
 				{
-					ZiType		= FLOAT64;
+					ZiType      = FLOAT64;
 					ExtraData   = TypeBuffer;
 					szExtraData = szTypeBuffer;
 				}
 			}
 			else
 			{
-				ZiType		= FLOAT64;
+				ZiType      = FLOAT64;
 				ExtraData   = TypeBuffer;
 				szExtraData = szTypeBuffer;
 			}

@@ -31,8 +31,8 @@ setup(name='ziproto',
         ext_modules=[
             Extension('ziproto',
                 sources=['ziproto/encoder.c', 'ziproto/decoder.c', 'ziproto/python.c', 'ziproto/common.c'],
-                extra_compile_args=['-std=c11', '-fsanitize=address'],
-                extra_link_args=['-fsanitize=address']
+                extra_compile_args=['-std=c17'],
+                #extra_link_args=['-fsanitize=address']
             )
         ]
 )
